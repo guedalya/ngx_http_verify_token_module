@@ -1,0 +1,5 @@
+libnginx-mod-http-verify-token (0.0.1) UNRELEASED; urgency=medium
+
+  * Initial release
+
+ -- Gedalya <gedalya@gedalya.net>  Fri, 13 Mar 2026 23:26:24 +0700

@@ -1,0 +1,20 @@
+Source: libnginx-mod-http-verify-token
+Section: httpd
+Priority: optional
+Maintainer: Gedalya <gedalya@gedalya.net>
+Build-Depends: debhelper-compat (= 13),
+               dh-sequence-nginx,
+               libblake3-dev,
+               nginx-dev
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+
+Package: libnginx-mod-http-verify-token
+Architecture: any
+Multi-Arch: foreign
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Recommends: nginx,
+Description: Token verification module for Nginx
+ This module verifies a secure token provided in a cookie, and can perform
+ an action if verification fails.

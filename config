@@ -1,0 +1,6 @@
+ngx_addon_name=ngx_http_verify_token_module
+ngx_module_type=HTTP
+ngx_module_name=$ngx_addon_name
+ngx_module_srcs="${ngx_addon_dir}/ngx_http_verify_token_module.c"
+ngx_module_libs="-lblake3"
+. auto/module
