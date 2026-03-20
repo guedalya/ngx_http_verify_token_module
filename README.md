@@ -50,7 +50,7 @@ Directly supply the token to verify, presumably using variables ($http_xxx, $arg
 * **Default**: 3600 seconds (1 hour)
 * **Context**: http, server, location
 
-The token is deemed valid for this many seconds after the timestamp.
+The token is deemed valid for the duration of this time period after the timestamp. Can be specified in nginx time interval format, e.g. `1h`, `7d`, `2w` etc.
 
 ### verify_token
 * **Default**: none
