@@ -18,6 +18,7 @@ typedef struct {
 	ngx_str_t cookie_name;
 	ngx_str_t extra_str;
 	u_char *secrets[2];
+	ngx_http_complex_value_t *token_to_verify;
 	ngx_http_complex_value_t *redir_location;
 	ngx_http_complex_value_t *redir_arg;
 	ngx_http_complex_value_t *add_header;
@@ -32,7 +33,7 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r);
 static ngx_int_t init(ngx_conf_t *cf);
 static void *create_conf(ngx_conf_t *cf);
 static char *merge_conf(ngx_conf_t *cf, void *parent, void *child);
-static int do_verify_cookie(ngx_http_request_t *r, verify_token_conf_t *conf);
+static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf);
 static int get_token(const ngx_http_request_t *r, const verify_token_conf_t *conf, ngx_str_t *token);
 static ngx_int_t add_variables(ngx_conf_t *cf);
 static ngx_int_t var_verify_token_result(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
@@ -78,6 +79,14 @@ static ngx_command_t verify_token_commands[] = {
 		ngx_conf_set_str_slot,
 		NGX_HTTP_LOC_CONF_OFFSET,
 		offsetof(verify_token_conf_t, extra_str),
+		NULL
+	},
+	{
+		ngx_string("verify_token_verify"),
+		NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+		ngx_http_set_complex_value_slot,
+		NGX_HTTP_LOC_CONF_OFFSET,
+		offsetof(verify_token_conf_t, token_to_verify),
 		NULL
 	},
 	{
@@ -413,6 +422,7 @@ static void *create_conf(ngx_conf_t *cf)
 	conf->expiry = NGX_CONF_UNSET;
 	conf->cookie_name.data = NULL;
 	conf->extra_str.data = NULL;
+	conf->token_to_verify = NGX_CONF_UNSET_PTR;
 	conf->redir_location = NGX_CONF_UNSET_PTR;
 	conf->redir_arg = NGX_CONF_UNSET_PTR;
 	conf->add_header = NGX_CONF_UNSET_PTR;
@@ -455,11 +465,13 @@ static char *merge_conf(ngx_conf_t *cf, void *parent, void *child)
 	if (!conf->secrets[1] && prev->secrets[1]) {
 		conf->secrets[1] = prev->secrets[1];
 	}
-
+	if (conf->token_to_verify == NGX_CONF_UNSET_PTR && prev->token_to_verify != NGX_CONF_UNSET_PTR) {
+		conf->token_to_verify = prev->token_to_verify;
+	}
 	return NGX_CONF_OK;
 }
 
-static int do_verify_cookie(ngx_http_request_t *r, verify_token_conf_t *conf) {
+static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf) {
 	ngx_str_t token_c, token;
 	time_t ttime, curtime;
 	size_t len;
@@ -468,14 +480,19 @@ static int do_verify_cookie(ngx_http_request_t *r, verify_token_conf_t *conf) {
 	struct sockaddr_in *sin;
 	struct sockaddr_in6 *sin6;
 
-	if (! conf->cookie_name.len) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: cookie name unset");
+	if (conf->token_to_verify != NGX_CONF_UNSET_PTR && conf->token_to_verify) {
+		if (ngx_http_complex_value(r, conf->token_to_verify, &token_c) != NGX_OK) {
+			return NGX_ERROR;
+		 }
+	} else if (conf->cookie_name.len) {
+		if (ngx_http_parse_multi_header_lines(r, r->headers_in.cookie, &conf->cookie_name, &token_c) == NULL) {
+			return 0;
+		}
+	} else {
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: verify_token_cookie or verify_token_verify must be set");
 		return NGX_ERROR;
 	}
 
-	if (ngx_http_parse_multi_header_lines(r, r->headers_in.cookie, &conf->cookie_name, &token_c) == NULL) {
-		return 0;
-	}
 	token.data = ngx_pnalloc(r->pool, ngx_base64_decoded_length(token_c.len));
 	if (token.data == NULL) {
 		return NGX_ERROR;
@@ -661,7 +678,7 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 	}
 
 	if (redir_enabled || (add_header_enabled && if_invalid)) {
-		verified = do_verify_cookie(r, conf);
+		verified = do_verify_token(r, conf);
 		if (verified == NGX_ERROR) {
 			return NGX_HTTP_INTERNAL_SERVER_ERROR;
 		}
@@ -745,7 +762,7 @@ static ngx_int_t var_verify_token_result(ngx_http_request_t *r, ngx_http_variabl
 		return NGX_ERROR;
 	}
 
-	verified = do_verify_cookie(r, conf) == 1;
+	verified = do_verify_token(r, conf) == 1;
 
 	v->no_cacheable = 1; // in testing this was redundant
 	// The NGX_HTTP_VAR_NOCACHEABLE flag does the job
