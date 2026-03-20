@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Gedalya Nie
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
