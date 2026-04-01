@@ -95,6 +95,8 @@ Otherwise a second argument is expected and the two arguments are taken as a hea
 
 If the last (second or third) argument is `if-invalid`, we first attempt to verify a token provided by the client and send this response only if verification fails.
 
+Can be used multiple times.
+
 ## Variables
 
 ### $verify_token_result
