@@ -191,9 +191,7 @@ static char *set_secret(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	value = cf->args->elts;
 	value++;
 	if (value->len != 64) {
-		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-			"Secret is of incorrect length. Must be 32 bytes (64 hex characters) long");
-		return NGX_CONF_ERROR;
+		return "Secret is of incorrect length. Must be 32 bytes (64 hex characters) long";
 	}
 	in = value->data;
 
@@ -212,9 +210,7 @@ static char *set_secret(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 			if (ch >= 'a' && ch <= 'f') {
 				val += (ch - 'a' + 10);
 			} else {
-				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-					"Secret contains non-hex characters");
-				return NGX_CONF_ERROR;
+				return "Secret contains non-hex characters";
 			}
 		}
 		c++;
