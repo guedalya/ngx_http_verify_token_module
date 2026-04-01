@@ -14,6 +14,10 @@
 #define VERIFY_TOKEN_UNKNOWN -1
 #define VERIFY_TOKEN_ERROR   -2
 
+#define VERIFY_TOKEN_HEADER_INVALID 0
+#define VERIFY_TOKEN_HEADER_ALWAYS  1
+#define VERIFY_TOKEN_HEADER_VALID   2
+
 typedef struct {
 	unsigned required;
 } verify_token_main_conf_t;
@@ -21,7 +25,7 @@ typedef struct {
 typedef struct {
 	ngx_http_complex_value_t *name;
 	ngx_http_complex_value_t *value;
-	unsigned if_invalid:1;
+	unsigned condition:2;
 } verify_token_headers_t;
 
 typedef struct {
@@ -337,7 +341,7 @@ static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 	if (h == NULL) {
 		return NGX_CONF_ERROR;
 	}
-	h->if_invalid = 0;
+	h->condition = VERIFY_TOKEN_HEADER_INVALID;
 
 	vtmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_verify_token_module);
 	vtmcf->required = 1;
@@ -386,8 +390,10 @@ static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 	}
 	value++;
 
-	if (value->len == 10 && strncmp(value->data, "if-invalid", 10) == 0) {
-		h->if_invalid = 1;
+	if (value->len == 6 && strncmp(value->data, "always", 6) == 0) {
+		h->condition = VERIFY_TOKEN_HEADER_ALWAYS;
+	} else if (value->len == 5 && strncmp(value->data, "valid", 5) == 0) {
+		h->condition = VERIFY_TOKEN_HEADER_VALID;
 	}
 
 	return NGX_CONF_OK;
@@ -654,10 +660,10 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 		verify_token_headers_t *h = conf->headers->elts;
 		for (int i = 0; i < conf->headers->nelts; i++) {
 			ngx_str_t h_name, h_value;
-			int if_invalid = h[i].if_invalid;
+			int condition = h[i].condition;
 			int auto_cookie = 0;
 
-			if (if_invalid) {
+			if (condition != VERIFY_TOKEN_HEADER_ALWAYS) {
 				if (verified == VERIFY_TOKEN_UNKNOWN) {
 					verified = do_verify_token(r, conf);
 					if (verified == VERIFY_TOKEN_ERROR) {
@@ -665,7 +671,11 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 					}
 					verified = verified == VERIFY_TOKEN_SUCCESS;
 				}
-				if (verified) {
+				if (
+					(verified && condition == VERIFY_TOKEN_HEADER_INVALID)
+					||
+					(!verified && condition == VERIFY_TOKEN_HEADER_VALID)
+				) {
 					continue;
 				}
 			}
@@ -693,9 +703,16 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 					return NGX_ERROR;
 				}
 				if (auto_cookie) {
-					if (h_value.len == 10 &&
-						strncmp(h_value.data, "if-invalid", 10) == 0)
+					if (h_value.len == 6 &&
+						strncmp(h_value.data, "always", 6) == 0)
 					{
+						condition = VERIFY_TOKEN_HEADER_ALWAYS;
+					} else if (h_value.len == 5 &&
+						strncmp(h_value.data, "valid", 5) == 0)
+					{
+						condition = VERIFY_TOKEN_HEADER_VALID;
+					}
+					if (condition != VERIFY_TOKEN_HEADER_ALWAYS) {
 						if (verified == VERIFY_TOKEN_UNKNOWN) {
 							verified = do_verify_token(r, conf);
 							if (verified == VERIFY_TOKEN_ERROR) {
@@ -703,7 +720,11 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 							}
 							verified = verified == VERIFY_TOKEN_SUCCESS;
 						}
-						if (verified) {
+						if (
+							(verified && condition == VERIFY_TOKEN_HEADER_INVALID)
+							||
+							(!verified && condition == VERIFY_TOKEN_HEADER_VALID)
+						) {
 							continue;
 						}
 					}

@@ -84,16 +84,16 @@ For internal redirects, named locations can perform better.
 **Usage**:
 
 * **Disable:** `verify_token_add_header off;`
-* **Add header:** `verify_token_add_header name value;`
-* **Set cookie:** `verify_token_add_header cookie;`
+* **Add header:** `verify_token_add_header name value [always|valid];`
+* **Set cookie:** `verify_token_add_header cookie [always|valid];`
 
 Takes one, two or three arguments. The first two can contain variables.
 
-If the first argument is `cookie`, a valid token is generated and sent to the client in a cookie according to the configured cookie name, secret, and expiry: ``Set-Cookie: $name=$token; path=/; max-age=$expiry; Secure``
+If the first argument is `cookie`, a valid token is generated and sent to the client in a cookie according to the configured cookie name, secret, and expiry, as follows: `Set-Cookie: $name=$token; path=/; max-age=$expiry; Secure`
 
 Otherwise a second argument is expected and the two arguments are taken as a header name and value to be sent to the client.
 
-If the last (second or third) argument is `if-invalid`, we first attempt to verify a token provided by the client and send this response only if verification fails.
+By default the header is added only if token verification fails. An optional argument can be added, `always` to add the header always, or `valid` to send the header only when verification succeeds.
 
 Can be used multiple times.
 
