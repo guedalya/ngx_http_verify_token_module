@@ -504,7 +504,13 @@ static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf) {
 			return VERIFY_TOKEN_ERROR;
 		}
 	} else if (conf->cookie_name.len) {
-		if (ngx_http_parse_multi_header_lines(r, r->headers_in.cookie, &conf->cookie_name, &token_c) == NULL) {
+		if (
+#if nginx_version >= 1029006
+	ngx_http_parse_cookie_lines
+#else
+	ngx_http_parse_multi_header_lines
+#endif
+	(r, r->headers_in.cookie, &conf->cookie_name, &token_c) == NULL) {
 			return VERIFY_TOKEN_FAILURE;
 		}
 	} else {
