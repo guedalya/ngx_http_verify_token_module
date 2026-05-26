@@ -249,7 +249,7 @@ static char *set_redir_location(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 	if (
 		value->len == 0
 		||
-		(value->len == 3 && strncmp(value->data, "off", 3) == 0)
+		(value->len == 3 && memcmp(value->data, "off", 3) == 0)
 	) {
 		// disabled
 		// prevent inheritance in merge_conf():
@@ -317,7 +317,7 @@ static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 	if (
 		value->len == 0
 		||
-		(value->len == 3 && strncmp(value->data, "off", 3) == 0)
+		(value->len == 3 && memcmp(value->data, "off", 3) == 0)
 	) {
 		if (conf->headers && conf->headers != NGX_CONF_UNSET_PTR) {
 			return "used earlier in the same scope and then set to off";
@@ -390,9 +390,9 @@ static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 	}
 	value++;
 
-	if (value->len == 6 && strncmp(value->data, "always", 6) == 0) {
+	if (value->len == 6 && memcmp(value->data, "always", 6) == 0) {
 		h->condition = VERIFY_TOKEN_HEADER_ALWAYS;
-	} else if (value->len == 5 && strncmp(value->data, "valid", 5) == 0) {
+	} else if (value->len == 5 && memcmp(value->data, "valid", 5) == 0) {
 		h->condition = VERIFY_TOKEN_HEADER_VALID;
 	}
 
@@ -412,7 +412,7 @@ static ngx_int_t add_variables(ngx_conf_t *cf) {
 		var->data = v->data;
 	}
 
-    return NGX_OK;
+	return NGX_OK;
 }
 
 static ngx_int_t init(ngx_conf_t *cf)
@@ -502,7 +502,7 @@ static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf) {
 	if (conf->token_to_verify != NGX_CONF_UNSET_PTR && conf->token_to_verify) {
 		if (ngx_http_complex_value(r, conf->token_to_verify, &token_c) != NGX_OK) {
 			return VERIFY_TOKEN_ERROR;
-		 }
+		}
 	} else if (conf->cookie_name.len) {
 		if (ngx_http_parse_multi_header_lines(r, r->headers_in.cookie, &conf->cookie_name, &token_c) == NULL) {
 			return VERIFY_TOKEN_FAILURE;
@@ -642,7 +642,7 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 		if (
 			rloc.len == 0
 			||
-			(rloc.len == 3 && strncmp(rloc.data, "off", 3) == 0)
+			(rloc.len == 3 && memcmp(rloc.data, "off", 3) == 0)
 		) {
 			redir_enabled = 0;
 		}
@@ -687,11 +687,11 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 			if (
 				h_name.len == 0
 				||
-				(h_name.len == 3 && strncmp(h_name.data, "off", 3) == 0)
+				(h_name.len == 3 && memcmp(h_name.data, "off", 3) == 0)
 			) {
 				break;
 			}
-			else if (h_name.len == 6 && strncmp(h_name.data, "cookie", 6) == 0) {
+			else if (h_name.len == 6 && memcmp(h_name.data, "cookie", 6) == 0) {
 				auto_cookie = 1;
 				if (!conf->cookie_name.len) {
 					ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: cookie name unset");
@@ -704,11 +704,11 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 				}
 				if (auto_cookie) {
 					if (h_value.len == 6 &&
-						strncmp(h_value.data, "always", 6) == 0)
+						memcmp(h_value.data, "always", 6) == 0)
 					{
 						condition = VERIFY_TOKEN_HEADER_ALWAYS;
 					} else if (h_value.len == 5 &&
-						strncmp(h_value.data, "valid", 5) == 0)
+						memcmp(h_value.data, "valid", 5) == 0)
 					{
 						condition = VERIFY_TOKEN_HEADER_VALID;
 					}
