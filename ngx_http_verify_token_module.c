@@ -14,17 +14,21 @@
 #define VERIFY_TOKEN_UNKNOWN -1
 #define VERIFY_TOKEN_ERROR   -2
 
-#define VERIFY_TOKEN_HEADER_INVALID 0
-#define VERIFY_TOKEN_HEADER_ALWAYS  1
-#define VERIFY_TOKEN_HEADER_VALID   2
+#define VERIFY_TOKEN_HEADER_INVALID  0
+#define VERIFY_TOKEN_HEADER_ALWAYS   1
+#define VERIFY_TOKEN_HEADER_VALID    2
+#define VERIFY_TOKEN_HEADER_EXPIRING 3
 
 typedef struct {
-	unsigned required;
+	unsigned phase_handler_required:1;
+	unsigned header_filter_required:1;
 } verify_token_main_conf_t;
 
 typedef struct {
 	ngx_http_complex_value_t *name;
 	ngx_http_complex_value_t *value;
+	time_t ttl;
+	ngx_array_t *status;
 	unsigned condition:2;
 } verify_token_headers_t;
 
@@ -46,15 +50,18 @@ static char *set_redir_location(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static void *create_main_conf(ngx_conf_t *cf);
 static ngx_int_t verify_token_handler(ngx_http_request_t *r);
+static ngx_int_t header_filter(ngx_http_request_t *r);
 static ngx_int_t init(ngx_conf_t *cf);
 static void *create_conf(ngx_conf_t *cf);
 static char *merge_conf(ngx_conf_t *cf, void *parent, void *child);
-static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf);
+static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf, time_t *ttl);
 static int get_token(const ngx_http_request_t *r, const verify_token_conf_t *conf, ngx_str_t *token);
 static ngx_int_t add_variables(ngx_conf_t *cf);
 static ngx_int_t var_verify_token_result(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 static ngx_int_t var_verify_token_token(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 static ngx_int_t var_verify_token_escaped_uri(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+
+static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
 
 static ngx_command_t verify_token_commands[] = {
 	{
@@ -115,7 +122,7 @@ static ngx_command_t verify_token_commands[] = {
 	},
 	{
 		ngx_string("verify_token_add_header"),
-		NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LIF_CONF | NGX_HTTP_LMT_CONF | NGX_CONF_TAKE123,
+		NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LIF_CONF | NGX_HTTP_LMT_CONF | NGX_CONF_1MORE,
 		set_add_header,
 		NGX_HTTP_LOC_CONF_OFFSET,
 		offsetof(verify_token_conf_t, headers),
@@ -258,7 +265,7 @@ static char *set_redir_location(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 		return NGX_CONF_OK;
 	} else {
 		vtmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_verify_token_module);
-		vtmcf->required = 1;
+		vtmcf->phase_handler_required = 1;
 		conf->redir_enabled = 1;
 	}
 
@@ -342,9 +349,10 @@ static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 		return NGX_CONF_ERROR;
 	}
 	h->condition = VERIFY_TOKEN_HEADER_INVALID;
+	h->status = NULL;
 
 	vtmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_verify_token_module);
-	vtmcf->required = 1;
+	vtmcf->header_filter_required = 1;
 	conf->add_header_enabled = 1;
 
 	h->name = ngx_palloc(cf->pool, sizeof(ngx_http_complex_value_t));
@@ -384,16 +392,72 @@ static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 		return NGX_CONF_ERROR;
 	}
 
-	nelts--;
-	if (!nelts) {
-		return NGX_CONF_OK;
-	}
-	value++;
-
-	if (value->len == 6 && memcmp(value->data, "always", 6) == 0) {
-		h->condition = VERIFY_TOKEN_HEADER_ALWAYS;
-	} else if (value->len == 5 && memcmp(value->data, "valid", 5) == 0) {
-		h->condition = VERIFY_TOKEN_HEADER_VALID;
+	int condition_set = 0;
+	while (--nelts && value++) {
+		if (value->len == 6 && memcmp(value->data, "always", 6) == 0) {
+			if (condition_set) {
+				return "condition [always|valid|invalid|expiring] can only be set once";
+			}
+			condition_set = 1;
+			h->condition = VERIFY_TOKEN_HEADER_ALWAYS;
+		} else if (value->len == 5 && memcmp(value->data, "valid", 5) == 0) {
+			if (condition_set) {
+				return "condition [always|valid|invalid|expiring] can only be set once";
+			}
+			condition_set = 1;
+			h->condition = VERIFY_TOKEN_HEADER_VALID;
+		} else if (value->len == 7 && memcmp(value->data, "invalid", 7) == 0) {
+			if (condition_set) {
+				return "condition [always|valid|invalid|expiring] can only be set once";
+			}
+			condition_set = 1;
+			// h->condition = VERIFY_TOKEN_HEADER_INVALID; // redundant
+		} else if (value->len == 8 && memcmp(value->data, "expiring", 8) == 0) {
+			if (condition_set) {
+				return "condition [always|valid|invalid|expiring] can only be set once";
+			}
+			condition_set = 1;
+			h->condition = VERIFY_TOKEN_HEADER_EXPIRING;
+			nelts--;
+			if (!nelts) {
+				return "\"expiring\" must be followed by a time value";
+			}
+			value++;
+			h->ttl = ngx_parse_time(value, 1);
+			if (h->ttl == (time_t) NGX_ERROR) {
+				return "invalid time value";
+			}
+		} else if (value->len == 6 && memcmp(value->data, "status", 6) == 0) {
+			if (h->status) {
+				return "status can only be set once";
+			}
+			h->status = ngx_array_create(cf->pool, 1, sizeof(ngx_uint_t));
+			if (h->status == NULL) {
+				return NGX_CONF_ERROR;
+			}
+			ngx_uint_t status;
+			ngx_uint_t c = 0;
+			while (--nelts) {
+				++value;
+				if ((status = ngx_atoi(value->data, value->len)) == NGX_ERROR) {
+					--value;
+					break;
+				}
+				ngx_uint_t *s = ngx_array_push(h->status);
+				if (s == NULL) {
+					return NGX_CONF_ERROR;
+				}
+				*s = status;
+				c++;
+			}
+			if (!c) {
+				return "\"status\" must be followed by one or more status code";
+			}
+			++nelts;
+		} else {
+			ngx_conf_log_error(NGX_LOG_ERR, cf, 0, "Unrecognized: \"%V\"", value);
+			return "Unrecognized argument";
+		}
 	}
 
 	return NGX_CONF_OK;
@@ -423,12 +487,17 @@ static ngx_int_t init(ngx_conf_t *cf)
 
 	cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 	mcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_verify_token_module);
-	if (mcf->required) {
+	if (mcf->phase_handler_required) {
 		h = ngx_array_push(&cmcf->phases[NGX_HTTP_PRECONTENT_PHASE].handlers);
 		if (h == NULL) {
 			return NGX_ERROR;
 		}
 		*h = verify_token_handler;
+	}
+
+	if (mcf->header_filter_required) {
+		ngx_http_next_header_filter = ngx_http_top_header_filter;
+		ngx_http_top_header_filter = header_filter;
 	}
 
 	return NGX_OK;
@@ -490,7 +559,7 @@ static char *merge_conf(ngx_conf_t *cf, void *parent, void *child)
 	return NGX_CONF_OK;
 }
 
-static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf) {
+static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf, time_t *ttl) {
 	ngx_str_t token_c, token;
 	time_t ttime, curtime;
 	size_t len;
@@ -528,8 +597,12 @@ static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf) {
 
 	curtime = ngx_time();
 	ttime = le64toh(*(time_t *) token.data);
-	if (ttime + conf->expiry < curtime || ttime > curtime + 60) {
+	time_t rttl = (ttime + conf->expiry) - curtime;
+	if (rttl <= 0 || ttime > curtime + 60) {
 		return VERIFY_TOKEN_FAILURE;
+	}
+	if (ttl != NULL) {
+		*ttl = rttl;
 	}
 	buf = ngx_pnalloc(r->pool, sizeof(time_t) + sizeof(struct in6_addr) + conf->extra_str.len);
 	if (buf == NULL) {
@@ -635,188 +708,192 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 	ngx_str_t rloc, argdata;
 	int arg = 0;
 	int verified = VERIFY_TOKEN_UNKNOWN;
-	int redir_enabled, add_header_enabled;
+	time_t ttl;
 
 	verify_token_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_verify_token_module);
 
-	redir_enabled = conf->redir_enabled;
-	if (redir_enabled) {
-		if (ngx_http_complex_value(r, conf->redir_location, &rloc) != NGX_OK) {
-			return NGX_ERROR;
-		}
-
-		if (
-			rloc.len == 0
-			||
-			(rloc.len == 3 && memcmp(rloc.data, "off", 3) == 0)
-		) {
-			redir_enabled = 0;
-		}
-		arg = conf->redir_arg && conf->redir_arg != NGX_CONF_UNSET_PTR;
+	if (!conf->redir_enabled) {
+		return NGX_DECLINED;
 	}
 
-	add_header_enabled = conf->add_header_enabled;
+	if (ngx_http_complex_value(r, conf->redir_location, &rloc) != NGX_OK) {
+		return NGX_ERROR;
+	}
 
-	if ((add_header_enabled || redir_enabled) && !conf->secrets[0]) {
+	if (
+		rloc.len == 0
+		||
+		(rloc.len == 3 && memcmp(rloc.data, "off", 3) == 0)
+	) {
+		return NGX_DECLINED;
+	}
+	arg = conf->redir_arg && conf->redir_arg != NGX_CONF_UNSET_PTR;
+
+	if (!conf->secrets[0]) {
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: secret unset");
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	if (add_header_enabled) {
-		verify_token_headers_t *h = conf->headers->elts;
-		for (int i = 0; i < conf->headers->nelts; i++) {
-			ngx_str_t h_name, h_value;
-			int condition = h[i].condition;
-			int auto_cookie = 0;
+	if (verified == VERIFY_TOKEN_UNKNOWN) {
+		verified = do_verify_token(r, conf, NULL);
+		if (verified == VERIFY_TOKEN_ERROR) {
+			return NGX_HTTP_INTERNAL_SERVER_ERROR;
+		}
+		verified = verified == VERIFY_TOKEN_SUCCESS;
+	}
+	if (verified) {
+		return NGX_DECLINED;
+	}
 
-			if (condition != VERIFY_TOKEN_HEADER_ALWAYS) {
-				if (verified == VERIFY_TOKEN_UNKNOWN) {
-					verified = do_verify_token(r, conf);
-					if (verified == VERIFY_TOKEN_ERROR) {
-						return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	ngx_int_t rc;
+	if (rloc.len == 3 && (rc = ngx_atoi(rloc.data, 3)) != NGX_ERROR) {
+		switch (rc) {
+			case 301:
+			case 302:
+			case 303:
+			case 307:
+			case 308:
+				if (arg) {
+					if (arg && ngx_http_complex_value(r, conf->redir_arg, &argdata) != NGX_OK) {
+						return NGX_ERROR;
 					}
-					verified = verified == VERIFY_TOKEN_SUCCESS;
+					r->headers_out.location = ngx_list_push(&r->headers_out.headers);
+					if (r->headers_out.location == NULL) {
+						return NGX_ERROR;
+					}
+					r->headers_out.location->hash = 1;
+					ngx_str_set(&r->headers_out.location->key, "Location");
+					r->headers_out.location->value = argdata;
 				}
-				if (
-					(verified && condition == VERIFY_TOKEN_HEADER_INVALID)
-					||
-					(!verified && condition == VERIFY_TOKEN_HEADER_VALID)
-				) {
-					continue;
-				}
-			}
+		}
+		r->headers_out.status = rc;
+		return rc;
+	}
 
-			if (ngx_http_complex_value(r, h[i].name, &h_name) != NGX_OK) {
-				return NGX_ERROR;
-			}
+	if (rloc.data[0] == '@') {
+		ngx_http_named_location(r, &rloc);
+	} else {
+		ngx_http_internal_redirect(r, &rloc, &r->args);
+	}
 
-			if (
-				h_name.len == 0
-				||
-				(h_name.len == 3 && memcmp(h_name.data, "off", 3) == 0)
-			) {
-				break;
-			}
-			else if (h_name.len == 6 && memcmp(h_name.data, "cookie", 6) == 0) {
-				auto_cookie = 1;
-				if (!conf->cookie_name.len) {
-					ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: cookie name unset");
+	ngx_http_finalize_request(r, NGX_DONE);
+	return NGX_DONE;
+}
+
+
+static ngx_int_t header_filter(ngx_http_request_t *r)
+{
+	verify_token_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_verify_token_module);
+	int verified = VERIFY_TOKEN_UNKNOWN;
+
+	if (! conf->add_header_enabled) {
+		return ngx_http_next_header_filter(r);
+	}
+
+	if (!conf->secrets[0]) {
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: secret unset");
+		return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	}
+
+	verify_token_headers_t *he = conf->headers->elts;
+	for (int i = 0; i < conf->headers->nelts; i++) {
+		ngx_str_t h_name, h_value;
+		verify_token_headers_t h = he[i];
+		int condition = h.condition;
+		int auto_cookie = 0;
+
+		if (condition != VERIFY_TOKEN_HEADER_ALWAYS) {
+			time_t ttl;
+			if (verified == VERIFY_TOKEN_UNKNOWN) {
+				verified = do_verify_token(r, conf, &ttl);
+				if (verified == VERIFY_TOKEN_ERROR) {
 					return NGX_HTTP_INTERNAL_SERVER_ERROR;
 				}
+				verified = verified == VERIFY_TOKEN_SUCCESS;
 			}
-			if (h[i].value) {
-				if (ngx_http_complex_value(r, h[i].value, &h_value) != NGX_OK) {
-					return NGX_ERROR;
-				}
-				if (auto_cookie) {
-					if (h_value.len == 6 &&
-						memcmp(h_value.data, "always", 6) == 0)
-					{
-						condition = VERIFY_TOKEN_HEADER_ALWAYS;
-					} else if (h_value.len == 5 &&
-						memcmp(h_value.data, "valid", 5) == 0)
-					{
-						condition = VERIFY_TOKEN_HEADER_VALID;
-					}
-					if (condition != VERIFY_TOKEN_HEADER_ALWAYS) {
-						if (verified == VERIFY_TOKEN_UNKNOWN) {
-							verified = do_verify_token(r, conf);
-							if (verified == VERIFY_TOKEN_ERROR) {
-								return NGX_HTTP_INTERNAL_SERVER_ERROR;
-							}
-							verified = verified == VERIFY_TOKEN_SUCCESS;
-						}
-						if (
-							(verified && condition == VERIFY_TOKEN_HEADER_INVALID)
-							||
-							(!verified && condition == VERIFY_TOKEN_HEADER_VALID)
-						) {
-							continue;
-						}
-					}
-				} else if (!h_value.len) {
-					continue;
-				}
-			} else if (!auto_cookie) {
-				continue;
-			}
-			ngx_table_elt_t *ha;
-			ha = ngx_list_push(&r->headers_out.headers);
-			if (ha == NULL) {
-				return NGX_ERROR;
-			}
-			ha->hash = 1;
-			if (auto_cookie) {
-				ngx_str_t token;
-				if (!get_token(r, conf, &token)) {
-					return NGX_ERROR;
-				}
-				ha->value.data = ngx_pnalloc(r->pool,
-					conf->cookie_name.len + token.len + NGX_TIME_T_LEN + 28);
-				if (ha->value.data == NULL) {
-					return NGX_ERROR;
-				}
-				ngx_str_set(&ha->key, "Set-Cookie");
-				ha->value.len = ngx_sprintf(ha->value.data,
-					"%V=%V; path=/; max-age=%i; Secure", &conf->cookie_name,
-					&token, conf->expiry)
-					- ha->value.data;
-			} else {
-				ha->key.len = h_name.len;
-				ha->key.data = h_name.data;
-				ha->value.len = h_value.len;
-				ha->value.data = h_value.data;
+			if (
+				(condition == VERIFY_TOKEN_HEADER_INVALID && verified)
+				||
+				(condition == VERIFY_TOKEN_HEADER_VALID && !verified)
+				||
+				(condition == VERIFY_TOKEN_HEADER_EXPIRING && verified && ttl > h.ttl)
+			) {
 				continue;
 			}
 		}
-	}
 
-	if (redir_enabled) {
-		if (verified == VERIFY_TOKEN_UNKNOWN) {
-			verified = do_verify_token(r, conf);
-			if (verified == VERIFY_TOKEN_ERROR) {
+		if (h.status) {
+			ngx_uint_t *status = h.status->elts;
+			int found = 0;
+			for (int si = 0; si < h.status->nelts; si++) {
+				if (r->headers_out.status == status[si]) {
+					found = 1;
+				}
+			}
+			if (!found) {
+				continue;
+			}
+		}
+
+		if (ngx_http_complex_value(r, h.name, &h_name) != NGX_OK) {
+			return NGX_ERROR;
+		}
+
+		if (h_name.len == 0) {
+			continue;
+		}
+		if (h_name.len == 3 && memcmp(h_name.data, "off", 3) == 0) {
+			break;
+		}
+		else if (h_name.len == 6 && memcmp(h_name.data, "cookie", 6) == 0) {
+			auto_cookie = 1;
+			if (!conf->cookie_name.len) {
+				ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: cookie name unset");
 				return NGX_HTTP_INTERNAL_SERVER_ERROR;
 			}
-			verified = verified == VERIFY_TOKEN_SUCCESS;
 		}
-		if (verified) {
-			return NGX_DECLINED;
+		if (h.value) {
+			if (ngx_http_complex_value(r, h.value, &h_value) != NGX_OK) {
+				return NGX_ERROR;
+			}
+			if (! auto_cookie && ! h_value.len) {
+				continue;
+			}
+		} else if (!auto_cookie) {
+			continue;
 		}
 
-		ngx_int_t rc;
-		if (rloc.len == 3 && (rc = ngx_atoi(rloc.data, 3)) != NGX_ERROR) {
-			switch (rc) {
-				case 301:
-				case 302:
-				case 303:
-				case 307:
-				case 308:
-					if (arg) {
-						if (arg && ngx_http_complex_value(r, conf->redir_arg, &argdata) != NGX_OK) {
-							return NGX_ERROR;
-						}
-						r->headers_out.location = ngx_list_push(&r->headers_out.headers);
-						if (r->headers_out.location == NULL) {
-							return NGX_ERROR;
-						}
-						r->headers_out.location->hash = 1;
-						ngx_str_set(&r->headers_out.location->key, "Location");
-						r->headers_out.location->value = argdata;
-					}
+		ngx_table_elt_t *ha;
+		ha = ngx_list_push(&r->headers_out.headers);
+		if (ha == NULL) {
+			return NGX_ERROR;
+		}
+		ha->hash = 1;
+		if (auto_cookie) {
+			ngx_str_t token;
+			if (!get_token(r, conf, &token)) {
+				return NGX_ERROR;
 			}
-			r->headers_out.status = rc;
-			return rc;
-		}
-		if (rloc.data[0] == '@') {
-			ngx_http_named_location(r, &rloc);
+			ha->value.data = ngx_pnalloc(r->pool,
+				conf->cookie_name.len + token.len + NGX_TIME_T_LEN + 28);
+			if (ha->value.data == NULL) {
+				return NGX_ERROR;
+			}
+			ngx_str_set(&ha->key, "Set-Cookie");
+			ha->value.len = ngx_sprintf(ha->value.data,
+				"%V=%V; path=/; max-age=%i; Secure", &conf->cookie_name,
+				&token, conf->expiry)
+				- ha->value.data;
 		} else {
-			ngx_http_internal_redirect(r, &rloc, &r->args);
+			ha->key.len = h_name.len;
+			ha->key.data = h_name.data;
+			ha->value.len = h_value.len;
+			ha->value.data = h_value.data;
+			continue;
 		}
-		ngx_http_finalize_request(r, NGX_DONE);
-		return NGX_DONE;
 	}
 
-	return NGX_DECLINED;
+    return ngx_http_next_header_filter(r);
 }
 
 static ngx_int_t var_verify_token_result(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
@@ -829,7 +906,7 @@ static ngx_int_t var_verify_token_result(ngx_http_request_t *r, ngx_http_variabl
 		return NGX_ERROR;
 	}
 
-	verified = do_verify_token(r, conf) == VERIFY_TOKEN_SUCCESS;
+	verified = do_verify_token(r, conf, NULL) == VERIFY_TOKEN_SUCCESS;
 
 	v->no_cacheable = 1; // in testing this was redundant
 	// The NGX_HTTP_VAR_NOCACHEABLE flag does the job

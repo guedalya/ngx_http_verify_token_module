@@ -84,18 +84,25 @@ For internal redirects, named locations can perform better.
 **Usage**:
 
 * **Disable:** `verify_token_add_header off;`
-* **Add header:** `verify_token_add_header name value [always|valid];`
-* **Set cookie:** `verify_token_add_header cookie [always|valid];`
+* **Add header:** `verify_token_add_header name value [always|valid|invalid|expiring ttl] [status ` *`code`* `...];`
+* **Set cookie:** `verify_token_add_header cookie;`
+* **Set cookie:** `verify_token_add_header cookie "" [always|valid|invalid|expiring ttl] [status ` *`code`* `...];`
+
+Can be used multiple times.
 
 Takes one, two or three arguments. The first two can contain variables.
 
 If the first argument is `cookie`, a valid token is generated and sent to the client in a cookie according to the configured cookie name, secret, and expiry, as follows: `Set-Cookie: $name=$token; path=/; max-age=$expiry; Secure`
 
-Otherwise a second argument is expected and the two arguments are taken as a header name and value to be sent to the client.
+Otherwise the first two arguments are taken as a header name and value to be sent to the client.
 
-By default the header is added only if token verification fails. An optional argument can be added, `always` to add the header always, or `valid` to send the header only when verification succeeds.
+**Condition**: You may specify conditions when to add the header.
 
-Can be used multiple times.
+Token validity: `always`: regardless of token validity, `valid`: only when verification succeeds, `invalid`: only when verification fails, `expiring`: A TTL time value must follow. Add header when verification fails, or the token is valid but its remaining validity period is equal to or less than TTL. The default is `invalid`.
+
+HTTP status code: `status`: when the HTTP status code matches one of the listed values. You may specify one or more value.
+
+Note: If you use `cookie` and you want to set conditions, set any value (such as the empty string) in place of the header value (the second argument).
 
 ## Variables
 
