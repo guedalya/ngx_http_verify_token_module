@@ -46,7 +46,25 @@ Name of cookie containing the token to be verified
 
 Directly supply the token to verify, presumably using variables ($http_xxx, $arg_xxx for headers or query string arguments)
 
-### verify_token_message ###
+### verify_token_message_secret
+* **Default**: none
+* **Context**: http, server, location
+
+Used for `verify_token_message`. 32-byte secret key, in hex.
+
+Do not use the same value as `verify_token_secret[_alt]`
+
+### verify_token_message_secret_alt
+* **Default**: none
+* **Context**: http, server, location
+
+Used for `verify_token_message`.
+
+If verification fails with the first secret and this is set, verification will be attempted with this secret. Can be useful for key rotation.
+
+Do not use the same value as `verify_token_secret[_alt]`
+
+### verify_token_message
 * **Default**: none
 * **Context**: http, server, location
 

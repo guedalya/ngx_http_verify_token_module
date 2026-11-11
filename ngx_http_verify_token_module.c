@@ -39,6 +39,7 @@ typedef struct {
 	ngx_str_t cookie_name;
 	ngx_str_t extra_str;
 	u_char *secrets[2];
+	u_char *message_secrets[2];
 	ngx_http_complex_value_t *token_to_verify;
 	ngx_http_complex_value_t *message;
 	ngx_http_complex_value_t *message_hmac;
@@ -122,6 +123,22 @@ static ngx_command_t verify_token_commands[] = {
 		set_message,
 		NGX_HTTP_LOC_CONF_OFFSET,
 		offsetof(verify_token_conf_t, message),
+		NULL
+	},
+		{
+		ngx_string("verify_token_message_secret"),
+		NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+		set_secret,
+		NGX_HTTP_LOC_CONF_OFFSET,
+		offsetof(verify_token_conf_t, message_secrets[0]),
+		NULL
+	},
+	{
+		ngx_string("verify_token_message_secret_alt"),
+		NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+		set_secret,
+		NGX_HTTP_LOC_CONF_OFFSET,
+		offsetof(verify_token_conf_t, message_secrets[1]),
 		NULL
 	},
 	{
@@ -627,6 +644,12 @@ static char *merge_conf(ngx_conf_t *cf, void *parent, void *child)
 	if (!conf->secrets[1] && prev->secrets[1]) {
 		conf->secrets[1] = prev->secrets[1];
 	}
+	if (!conf->message_secrets[0] && prev->message_secrets[0]) {
+		conf->message_secrets[0] = prev->message_secrets[0];
+	}
+	if (!conf->message_secrets[1] && prev->message_secrets[1]) {
+		conf->message_secrets[1] = prev->message_secrets[1];
+	}
 	if (!conf->token_to_verify && prev->token_to_verify) {
 		conf->token_to_verify = prev->token_to_verify;
 	}
@@ -834,11 +857,11 @@ static int do_verify_message(ngx_http_request_t *r, verify_token_conf_t *conf, t
 	memcpy(buf + (sizeof(uint64_t) * 2), msg.data, msg.len);
 
 	for (int c = 0; c < 2; c++) {
-		if (!conf->secrets[c]) {
+		if (!conf->message_secrets[c]) {
 			continue;
 		}
 		blake3_hasher hasher;
-		blake3_hasher_init_keyed(&hasher, conf->secrets[c]);
+		blake3_hasher_init_keyed(&hasher, conf->message_secrets[c]);
 		blake3_hasher_update(&hasher, buf, len);
 		blake3_hasher_finalize(&hasher, obuf, BLAKE3_OUT_LEN);
 		if (!memcmp(obuf, hmac.data + (sizeof(uint64_t) * 2), BLAKE3_OUT_LEN)) {
