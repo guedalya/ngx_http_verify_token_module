@@ -40,11 +40,33 @@ Extra string appended to the hashed message. This can be used to grant access to
 
 Name of cookie containing the token to be verified
 
-### verify_token_verify
+### verify_token_token
 * **Default**: none
 * **Context**: http, server, location
 
 Directly supply the token to verify, presumably using variables ($http_xxx, $arg_xxx for headers or query string arguments)
+
+### verify_token_message ###
+* **Default**: none
+* **Context**: http, server, location
+
+**Usage**:
+
+`verify_token_message` *`message`* *`token`*`;`
+
+Takes two arguments, both can contain variables.
+
+The `verify_token` directive will verify this instead of, or in addition to the cookie, or token specified by `verify_token_cookie`, if configured.
+
+The token is expected to be in the following format, encoded in base64:
+
+begin-validity|end-validity|hash
+
+The hash is a BLAKE3 keyed hash of the following message:
+
+begin-validity|end-validity|message
+
+begin-validity and end-validity are 64-bit UNIX timestamps, in little endian byte order.
 
 ### verify_token_expiry
 * **Default**: 3600 seconds (1 hour)
@@ -68,7 +90,7 @@ Takes one or two arguments, both can contain variables.
 
 If the first argument is `off`, this directive is disabled.
 
-Try to verify a token provided in `verify_token_verify` if set, or contained in the cookie named by `verify_token_cookie`.
+Try to verify a token provided in `verify_token_token` if set, or contained in the cookie named by `verify_token_cookie`.
 
 If verification fails, perform the specified action: either an internal redirect or an HTTP response. If the HTTP status code is one of 301, 302, 303, 307, 308 and an extra argument is provided, the extra argument is placed in a `Location` header, providing the redirect destination.
 
