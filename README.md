@@ -132,7 +132,7 @@ Note: If you use `cookie` and you want to set conditions, set any value (such as
 
 When this variable is used, verification is attempted according to the configuration, as described for the [verify_token](#verify_token) directive. If a token is found and is valid and not expired, the value of this variable would be `1`, otherwise `0`.
 
-### $verify_token_token
+### $verify_token_newtoken
 
 Evaluates to a valid token using the currently set secret. The hashed message consists of the current timestamp, the client's binary IP address, and `verify_token_extra_str` if set.
 

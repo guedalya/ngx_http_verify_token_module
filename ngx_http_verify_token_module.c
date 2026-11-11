@@ -671,26 +671,29 @@ static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf, tim
 	if (token.data == NULL) {
 		return VERIFY_TOKEN_ERROR;
 	}
-	if (ngx_decode_base64(&token, &token_c) != NGX_OK || token.len != sizeof(time_t) + BLAKE3_OUT_LEN) {
+	if (ngx_decode_base64(&token, &token_c) != NGX_OK || token.len != sizeof(uint64_t) + BLAKE3_OUT_LEN) {
 		return VERIFY_TOKEN_FAILURE;
 	}
 
 	curtime = ngx_time();
 	ttime = le64toh(*(time_t *) token.data);
+	if (ttime > curtime + 60) {
+		return VERIFY_TOKEN_FAILURE;
+	}
 	time_t rttl = (ttime + conf->expiry) - curtime;
-	if (rttl <= 0 || ttime > curtime + 60) {
+	if (rttl <= 0) {
 		return VERIFY_TOKEN_FAILURE;
 	}
 	if (ttl != NULL) {
 		*ttl = rttl;
 	}
-	buf = ngx_pnalloc(r->pool, sizeof(time_t) + sizeof(struct in6_addr) + conf->extra_str.len);
+	buf = ngx_pnalloc(r->pool, sizeof(uint64_t) + sizeof(struct in6_addr) + conf->extra_str.len);
 	if (buf == NULL) {
 		return VERIFY_TOKEN_ERROR;
 	}
 
 	*(time_t *) buf = *(time_t *) token.data;
-	len = sizeof(time_t);
+	len = sizeof(uint64_t);
 
 	switch (r->connection->sockaddr->sa_family) {
 		case AF_INET6:
@@ -720,7 +723,7 @@ static int do_verify_token(ngx_http_request_t *r, verify_token_conf_t *conf, tim
 		blake3_hasher_init_keyed(&hasher, conf->secrets[c]);
 		blake3_hasher_update(&hasher, buf, len);
 		blake3_hasher_finalize(&hasher, obuf, BLAKE3_OUT_LEN);
-		if (!memcmp(obuf, token.data + sizeof(time_t), BLAKE3_OUT_LEN)) {
+		if (!memcmp(obuf, token.data + sizeof(uint64_t), BLAKE3_OUT_LEN)) {
 			return VERIFY_TOKEN_SUCCESS;
 		}
 	}
@@ -734,21 +737,21 @@ static int get_token(const ngx_http_request_t *r, const verify_token_conf_t *con
 	struct sockaddr_in *sin;
 	struct sockaddr_in6 *sin6;
 	u_char *buf;
-	u_char obuf[sizeof(time_t) + BLAKE3_OUT_LEN];
+	u_char obuf[sizeof(uint64_t) + BLAKE3_OUT_LEN];
 	time_t curtime;
 
-	size_t tokenlen = ngx_base64_encoded_length(sizeof(time_t) + BLAKE3_OUT_LEN);
+	size_t tokenlen = ngx_base64_encoded_length(sizeof(uint64_t) + BLAKE3_OUT_LEN);
 	token->data = ngx_pnalloc(r->pool, tokenlen);
-	buf = ngx_pnalloc(r->pool, sizeof(time_t) + sizeof(struct in6_addr) + conf->extra_str.len);
+	buf = ngx_pnalloc(r->pool, sizeof(uint64_t) + sizeof(struct in6_addr) + conf->extra_str.len);
 	if (token->data == NULL || buf == NULL) {
-		return NGX_ERROR;
+		return 0;
 	}
 	token_bin.len = sizeof(obuf);
 	token_bin.data = (u_char *) &obuf;
 
 	curtime = htole64(ngx_time());
 	*(time_t *) buf = curtime;
-	len = sizeof(time_t);
+	len = sizeof(uint64_t);
 	time_t *obuft = (time_t *)&obuf;
 	*obuft = curtime;
 
@@ -776,7 +779,7 @@ static int get_token(const ngx_http_request_t *r, const verify_token_conf_t *con
 	blake3_hasher hasher;
 	blake3_hasher_init_keyed(&hasher, conf->secrets[0]);
 	blake3_hasher_update(&hasher, buf, len);
-	blake3_hasher_finalize(&hasher, &obuf[sizeof(time_t)], BLAKE3_OUT_LEN);
+	blake3_hasher_finalize(&hasher, &obuf[sizeof(uint64_t)], BLAKE3_OUT_LEN);
 
 	ngx_encode_base64(token, &token_bin);
 
@@ -804,7 +807,7 @@ static int do_verify_message(ngx_http_request_t *r, verify_token_conf_t *conf, t
 	if (hmac.data == NULL) {
 		return VERIFY_TOKEN_ERROR;
 	}
-	if (ngx_decode_base64(&hmac, &hmac_c) != NGX_OK || hmac.len != (sizeof(time_t) * 2) + BLAKE3_OUT_LEN) {
+	if (ngx_decode_base64(&hmac, &hmac_c) != NGX_OK || hmac.len != (sizeof(uint64_t) * 2) + BLAKE3_OUT_LEN) {
 		return VERIFY_TOKEN_FAILURE;
 	}
 
@@ -820,15 +823,15 @@ static int do_verify_message(ngx_http_request_t *r, verify_token_conf_t *conf, t
 		*ttl = rttl;
 	}
 
-	len = (sizeof(time_t) * 2) + msg.len;
+	len = (sizeof(uint64_t) * 2) + msg.len;
 	buf = ngx_pnalloc(r->pool, len);
 	if (buf == NULL) {
 		return VERIFY_TOKEN_ERROR;
 	}
 	time_t *tbuf = (time_t *)buf;
-	tbuf[0] = start_time;
-	tbuf[1] = end_time;
-	memcpy(buf + (sizeof(time_t) * 2), msg.data, msg.len);
+	tbuf[0] = tdata[0];
+	tbuf[1] = tdata[1];
+	memcpy(buf + (sizeof(uint64_t) * 2), msg.data, msg.len);
 
 	for (int c = 0; c < 2; c++) {
 		if (!conf->secrets[c]) {
@@ -838,7 +841,7 @@ static int do_verify_message(ngx_http_request_t *r, verify_token_conf_t *conf, t
 		blake3_hasher_init_keyed(&hasher, conf->secrets[c]);
 		blake3_hasher_update(&hasher, buf, len);
 		blake3_hasher_finalize(&hasher, obuf, BLAKE3_OUT_LEN);
-		if (!memcmp(obuf, hmac.data + (sizeof(time_t) * 2), BLAKE3_OUT_LEN)) {
+		if (!memcmp(obuf, hmac.data + (sizeof(uint64_t) * 2), BLAKE3_OUT_LEN)) {
 			return VERIFY_TOKEN_SUCCESS;
 		}
 	}
@@ -852,7 +855,10 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 	int arg = 0;
 	int verified = VERIFY_TOKEN_UNKNOWN;
 	int msg_verified = VERIFY_TOKEN_UNKNOWN;
-	time_t ttl;
+
+	if (r != r->main) {
+		return NGX_DECLINED;
+	}
 
 	verify_token_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_verify_token_module);
 
@@ -892,7 +898,7 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 		}
 	}
 
-	if (verified == msg_verified == VERIFY_TOKEN_UNKNOWN) {
+	if (verified == VERIFY_TOKEN_UNKNOWN && msg_verified == VERIFY_TOKEN_UNKNOWN) {
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: Nothing to verify. None of verify_token_cookie, verify_token_token or verify_token_message are set");
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
@@ -914,9 +920,10 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 			case 307:
 			case 308:
 				if (arg) {
-					if (arg && ngx_http_complex_value(r, conf->redir_arg, &argdata) != NGX_OK) {
+					if (ngx_http_complex_value(r, conf->redir_arg, &argdata) != NGX_OK) {
 						return NGX_ERROR;
 					}
+					ngx_http_clear_location(r);
 					r->headers_out.location = ngx_list_push(&r->headers_out.headers);
 					if (r->headers_out.location == NULL) {
 						return NGX_ERROR;
@@ -946,13 +953,13 @@ static ngx_int_t header_filter(ngx_http_request_t *r)
 	verify_token_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_verify_token_module);
 	int verified = VERIFY_TOKEN_UNKNOWN;
 
-	if (! conf->add_header_enabled) {
+	if (r != r->main || ! conf->add_header_enabled) {
 		return ngx_http_next_header_filter(r);
 	}
 
 	if (!conf->secrets[0]) {
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: secret unset");
-		return NGX_HTTP_INTERNAL_SERVER_ERROR;
+		return ngx_http_next_header_filter(r);
 	}
 
 	verify_token_headers_t *he = conf->headers->elts;
@@ -967,7 +974,7 @@ static ngx_int_t header_filter(ngx_http_request_t *r)
 			if (verified == VERIFY_TOKEN_UNKNOWN) {
 				verified = do_verify_token(r, conf, &ttl);
 				if (verified == VERIFY_TOKEN_ERROR) {
-					return NGX_HTTP_INTERNAL_SERVER_ERROR;
+					return NGX_ERROR;
 				}
 				verified = verified == VERIFY_TOKEN_SUCCESS;
 			}
@@ -1009,7 +1016,7 @@ static ngx_int_t header_filter(ngx_http_request_t *r)
 			auto_cookie = 1;
 			if (!conf->cookie_name.len) {
 				ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: cookie name unset");
-				return NGX_HTTP_INTERNAL_SERVER_ERROR;
+				return NGX_ERROR;
 			}
 		}
 		if (h.value) {
