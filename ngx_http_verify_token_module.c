@@ -1041,7 +1041,7 @@ static ngx_int_t header_filter(ngx_http_request_t *r)
 			}
 			ngx_str_set(&ha->key, "Set-Cookie");
 			ha->value.len = ngx_sprintf(ha->value.data,
-				"%V=%V; path=/; max-age=%i; Secure", &conf->cookie_name,
+				"%V=%V; Path=/; Max-Age=%i; Secure", &conf->cookie_name,
 				&token, conf->expiry)
 				- ha->value.data;
 		} else {

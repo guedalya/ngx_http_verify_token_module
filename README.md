@@ -114,7 +114,7 @@ Can be used multiple times.
 
 Takes one, two or three arguments. The first two can contain variables.
 
-If the first argument is `cookie`, a valid token is generated and sent to the client in a cookie according to the configured cookie name, secret, and expiry, as follows: `Set-Cookie: $name=$token; path=/; max-age=$expiry; Secure`
+If the first argument is `cookie`, a valid token is generated and sent to the client in a cookie according to the configured cookie name, secret, and expiry, as follows: `Set-Cookie: $name=$token; Path=/; Max-Age=$expiry; Secure`
 
 Otherwise the first two arguments are taken as a header name and value to be sent to the client.
 
