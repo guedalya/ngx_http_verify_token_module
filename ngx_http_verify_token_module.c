@@ -507,7 +507,7 @@ static char *set_add_header(ngx_conf_t *cf, ngx_command_t *cmd, void *cp)
 			if (h->status == NULL) {
 				return NGX_CONF_ERROR;
 			}
-			ngx_uint_t status;
+			ngx_int_t status;
 			ngx_uint_t c = 0;
 			while (--nelts) {
 				++value;
@@ -933,8 +933,12 @@ static ngx_int_t verify_token_handler(ngx_http_request_t *r)
 					r->headers_out.location->value = argdata;
 				}
 		}
-		r->headers_out.status = rc;
-		return rc;
+		if (rc <= 200) {
+			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "verify_token: status code must be > 200");
+		} else {
+			r->headers_out.status = rc;
+			return rc;
+		}
 	}
 
 	if (rloc.data[0] == '@') {
@@ -963,14 +967,14 @@ static ngx_int_t header_filter(ngx_http_request_t *r)
 	}
 
 	verify_token_headers_t *he = conf->headers->elts;
-	for (int i = 0; i < conf->headers->nelts; i++) {
+	for (ngx_uint_t i = 0; i < conf->headers->nelts; i++) {
 		ngx_str_t h_name, h_value;
 		verify_token_headers_t h = he[i];
 		int condition = h.condition;
 		int auto_cookie = 0;
 
 		if (condition != VERIFY_TOKEN_HEADER_ALWAYS) {
-			time_t ttl;
+			time_t ttl = 0;
 			if (verified == VERIFY_TOKEN_UNKNOWN) {
 				verified = do_verify_token(r, conf, &ttl);
 				if (verified == VERIFY_TOKEN_ERROR) {
@@ -992,7 +996,7 @@ static ngx_int_t header_filter(ngx_http_request_t *r)
 		if (h.status) {
 			ngx_uint_t *status = h.status->elts;
 			int found = 0;
-			for (int si = 0; si < h.status->nelts; si++) {
+			for (ngx_uint_t si = 0; si < h.status->nelts; si++) {
 				if (r->headers_out.status == status[si]) {
 					found = 1;
 				}
@@ -1048,7 +1052,7 @@ static ngx_int_t header_filter(ngx_http_request_t *r)
 			}
 			ngx_str_set(&ha->key, "Set-Cookie");
 			ha->value.len = ngx_sprintf(ha->value.data,
-				"%V=%V; Path=/; Max-Age=%i; Secure", &conf->cookie_name,
+				"%V=%V; Path=/; Max-Age=%T; Secure", &conf->cookie_name,
 				&token, conf->expiry)
 				- ha->value.data;
 		} else {

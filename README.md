@@ -84,7 +84,7 @@ The token is deemed valid for the duration of this time period after the timesta
 * **Redirect to named location:** `verify_token @challenge;`
 * **Redirect to location:** `verify_token /challenge;`
 * **Respond with HTTP redirect:** `verify_token 303 /challenge;`
-* **Respond with any HTTP status code:** `verify_token 403;`
+* **Respond with a given HTTP status code:** `verify_token 403;`
 
 Takes one or two arguments, both can contain variables.
 
@@ -93,6 +93,8 @@ If the first argument is `off`, or empty, this directive is disabled.
 Try to verify a token provided in `verify_token_token` if set, or contained in the cookie named by `verify_token_cookie`.
 
 If verification fails, perform the specified action: either an internal redirect or an HTTP response. If the HTTP status code is one of 301, 302, 303, 307, 308 and an extra argument is provided, the extra argument is placed in a `Location` header, providing the redirect destination.
+
+Specified status codes must be greater than 200.
 
 HTTP redirect behavior is further controlled by Nginx core module directives `absolute_redirect`, `server_name_in_redirect`, and `port_in_redirect`.
 
