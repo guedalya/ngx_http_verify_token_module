@@ -88,7 +88,7 @@ The token is deemed valid for the duration of this time period after the timesta
 
 Takes one or two arguments, both can contain variables.
 
-If the first argument is `off`, this directive is disabled.
+If the first argument is `off`, or empty, this directive is disabled.
 
 Try to verify a token provided in `verify_token_token` if set, or contained in the cookie named by `verify_token_cookie`.
 
